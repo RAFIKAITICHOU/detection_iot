@@ -17,7 +17,7 @@ API_URL_LOGIN = "http://127.0.0.1:8080/api/auth/login"
 API_URL_BATCH_PLACE = "http://127.0.0.1:8080/api/places/batch"
 API_URL_GET_PLACES = "http://127.0.0.1:8080/api/places/parking/1"
 SYNC_API_URL = "http://127.0.0.1:8080/api/synchronisation/iot/synchroniser"
-PARKING_ID = 2
+PARKING_ID = 1
 BLOC = "0"  # "0" car le parking Guichet a 1 seul étage (Niveau 0)
 IP_RASPBERRY = "172.20.10.4"
 ID_CAMERA = "CAM-01"
@@ -35,6 +35,21 @@ PLACE_HEIGHT = 48
 # Initialisation du modèle YOLOv8
 print("Chargement du modèle YOLOv8...")
 model = YOLO('yolov8n.pt')
+
+TOKEN = ""
+
+def obtenir_token():
+    global TOKEN
+    if TOKEN:
+        return TOKEN
+    try:
+        res = requests.post(API_URL_LOGIN, json={"email": EMAIL_ADMIN, "motDePasse": PASSWORD_ADMIN}, timeout=5)
+        if res.status_code == 200:
+            TOKEN = res.json().get('token', '')
+            return TOKEN
+    except Exception as e:
+        pass
+    return ""
 
 # ==================== FONCTIONS UTILITAIRES ====================
 
@@ -61,6 +76,29 @@ def center_in_box(center_x, center_y, box):
 
 # ==================== GESTION DES PLACES ====================
 
+def obtenir_parking_id(token=None):
+    """Tente de récupérer dynamiquement l'ID du premier parking disponible dans le backend. Fallback sur PARKING_ID si échec."""
+    global PARKING_ID, API_URL_GET_PLACES
+    try:
+        headers = {"Authorization": f"Bearer {token}"} if token else {}
+        res = requests.get("http://127.0.0.1:8080/api/parkings", headers=headers, timeout=5)
+        if res.status_code == 200:
+            parkings = res.json()
+            if parkings:
+                first_parking = parkings[0]
+                PARKING_ID = first_parking.get('id', PARKING_ID)
+                # Mettre à jour les URLs dépendantes
+                API_URL_GET_PLACES = f"http://127.0.0.1:8080/api/places/parking/{PARKING_ID}"
+                print(f"[OK] Parking détecté dynamiquement : ID={PARKING_ID} — '{first_parking.get('nom')}'")
+                return PARKING_ID
+            else:
+                print("[!] Aucun parking trouvé dans la base de données. Utilisation de l'ID par défaut 1.")
+        else:
+            print(f"[!] Impossible de lister les parkings (Code: {res.status_code}). Utilisation de l'ID par défaut 1.")
+    except Exception as e:
+        print(f"[!] Serveur injoignable pour lister les parkings ({e}). Utilisation de l'ID par défaut 1.")
+    return PARKING_ID
+
 def charger_et_creer_places():
     """Charge les positions depuis CarParkPos et crée les places dans le backend en lot"""
     if not os.path.exists(POSITIONS_FILE):
@@ -69,17 +107,14 @@ def charger_et_creer_places():
         return None
 
     # Authentification pour obtenir le token
-    token = ""
-    try:
-        print("[+] Connexion au Backend pour obtenir les droits d'administration...")
-        res_login = requests.post(API_URL_LOGIN, json={"email": EMAIL_ADMIN, "motDePasse": PASSWORD_ADMIN})
-        if res_login.status_code == 200:
-            token = res_login.json().get('token', '')
-            print("[OK] Connexion réussie !")
-        else:
-            print("[!] Échec de la connexion (Vérifiez les identifiants).")
-    except Exception as e:
-        print("[!] Serveur inaccessible pour le login.")
+    print("[+] Connexion au Backend pour obtenir les droits d'administration...")
+    token = obtenir_token()
+    if token:
+        print("[OK] Connexion réussie !")
+    else:
+        print("[!] Échec de la connexion (Vérifiez les identifiants).")
+        
+    obtenir_parking_id(token)
         
     headers = {"Authorization": f"Bearer {token}"} if token else {}
 
@@ -175,14 +210,19 @@ def charger_et_creer_places():
 
 # ==================== SYNCHRONISATION ====================
 
-def fetch_backend_states(token):
+def fetch_backend_states():
     """Récupère l'état réel des places depuis le backend (LIBRE, OCCUPEE, RESERVEE)"""
+    token = obtenir_token()
     try:
         headers = {"Authorization": f"Bearer {token}"} if token else {}
         response = requests.get(API_URL_GET_PLACES, headers=headers, timeout=5)
         if response.status_code == 200:
             places_data = response.json()
             return {p['id']: p['statut'] for p in places_data}
+        elif response.status_code in [401, 403]:
+            # Token expiré ou invalide, on force la reconnexion au prochain appel
+            global TOKEN
+            TOKEN = ""
     except Exception as e:
         pass
     return None
@@ -215,14 +255,8 @@ def main():
     if not places:
         return
 
-    # S'authentifier une fois pour le fetch des statuts
-    token = ""
-    try:
-        res = requests.post(API_URL_LOGIN, json={"email": EMAIL_ADMIN, "motDePasse": PASSWORD_ADMIN})
-        if res.status_code == 200:
-            token = res.json().get('token', '')
-    except:
-        pass
+    # S'authentifier pour obtenir le token
+    obtenir_token()
 
     cap = cv2.VideoCapture(VIDEO_SOURCE)
     if not cap.isOpened():
@@ -237,6 +271,8 @@ def main():
     print("\n--- DÉMARRAGE DE LA DÉTECTION TEMPS RÉEL (YOLOv8) ---")
     
     voitures_boxes = [] # Pour stocker les détections et les dessiner à chaque frame
+    
+    headless = False
     
     while True:
         success, frame = cap.read()
@@ -305,6 +341,16 @@ def main():
                 if nouvel_etat == 0:
                     places_libres += 1
                 
+                # Mise à jour locale en temps réel pour l'affichage visuel immédiat (vert/rouge)
+                if est_occupee:
+                    etats_backend[place_id_db] = "OCCUPEE"
+                else:
+                    # Si c'était RESERVEE dans le backend (et qu'elle est toujours vide physiquement), on préserve RESERVEE
+                    if etats_backend.get(place_id_db) == "RESERVEE":
+                        pass
+                    else:
+                        etats_backend[place_id_db] = "LIBRE"
+                
                 # Enregistrer le changement pour l'envoi IoT
                 if derniers_etats_iot.get(place_id_db) != nouvel_etat:
                     changements.append({
@@ -327,10 +373,15 @@ def main():
 
         # Récupérer l'état réel du backend (pour voir les places RESERVEE) toutes les 3 secondes
         if current_time - last_fetch_time >= 3.0:
-            backend_states = fetch_backend_states(token)
+            backend_states = fetch_backend_states()
             if backend_states:
                 for db_id, statut in backend_states.items():
-                    etats_backend[db_id] = statut
+                    # Si c'est physiquement occupé localement, on affiche toujours OCCUPEE (Rouge)
+                    if derniers_etats_iot.get(db_id) == 1:
+                        etats_backend[db_id] = "OCCUPEE"
+                    else:
+                        # Sinon on suit l'état du backend (ex: RESERVEE en jaune, ou LIBRE en vert)
+                        etats_backend[db_id] = statut
             last_fetch_time = current_time
 
         # Affichage visuel (Mise à jour à chaque frame)
@@ -354,12 +405,28 @@ def main():
             cv2.putText(img_display, str(place['numero']), (place['x1'], place['y1']-5), 
                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
             
-        cv2.imshow("Smart Parking - YOLOv8", img_display)
-        if cv2.waitKey(1) & 0xFF == ord('q'):
-            break
+        if not headless:
+            try:
+                cv2.imshow("Smart Parking - YOLOv8", img_display)
+                if cv2.waitKey(1) & 0xFF == ord('q'):
+                    break
+            except Exception as e:
+                print("\n[!] OpenCV GUI non disponible ou non implémenté (headless). La détection continuera en arrière-plan sans affichage.")
+                headless = True
+                try:
+                    cv2.destroyAllWindows()
+                except:
+                    pass
+        else:
+            # Simuler un léger délai pour ne pas surcharger le CPU
+            time.sleep(0.03)
 
     cap.release()
-    cv2.destroyAllWindows()
+    if not headless:
+        try:
+            cv2.destroyAllWindows()
+        except:
+            pass
 
 if __name__ == "__main__":
     try:
