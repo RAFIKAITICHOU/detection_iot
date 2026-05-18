@@ -2,3 +2,5 @@ opencv-python-headless
 numpy
 streamlit
 cvzone
+requests
+ultralytics

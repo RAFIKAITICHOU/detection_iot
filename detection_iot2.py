@@ -12,7 +12,7 @@ import time
 from datetime import datetime
 
 # ==================== CONFIGURATION ====================
-API_URL = "http://172.20.10.3:8080/api/iot/detection"
+API_URL = "http://localhost:8080/api/iot/detection"
 PARKING_ID = 1
 IP_RASPBERRY = "172.20.10.4"
 ID_CAMERA = "CAM-01"

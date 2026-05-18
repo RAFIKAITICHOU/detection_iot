@@ -16,6 +16,7 @@ from datetime import datetime
 
 # ==================== CONFIGURATION ====================
 # Configuration API
+# IMPORTANT: Remplacez 'localhost' par l'adresse IP de votre PC si le script tourne sur le Raspberry Pi
 API_URL = "http://localhost:8080/api/iot/detection"
 SYNC_API_URL = "http://localhost:8080/api/synchronisation/iot/synchroniser"
 PARKING_ID = 1
