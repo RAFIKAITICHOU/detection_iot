@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Smart Parking - Détection par Analyse de Pixels avec Affichage Visuel
+ParkiHna - Détection par Analyse de Pixels avec Affichage Visuel
 Crée les places dans l'Admin Parking, dessine les frames en Rouge/Vert, et synchronise.
 Idéal pour la vidéo carPark.mp4 où YOLOv8 a du mal avec la vue de haut.
 """
@@ -13,9 +13,9 @@ import time
 import os
 
 # ==================== CONFIGURATION ====================
-API_URL_LOGIN = "http://localhost:8080/api/auth/login"
-API_URL_BATCH_PLACE = "http://localhost:8080/api/places/batch"
-SYNC_API_URL = "http://localhost:8080/api/synchronisation/iot/synchroniser"
+API_URL_LOGIN = "http://localhost:8081/api/auth/login"
+API_URL_BATCH_PLACE = "http://localhost:8081/api/places/batch"
+SYNC_API_URL = "http://localhost:8081/api/synchronisation/iot/synchroniser"
 PARKING_ID = 1
 BLOC = "0" # "0" car le parking Guichet a 1 seul étage (Niveau 0)
 IP_RASPBERRY = "172.20.10.4"
@@ -212,10 +212,10 @@ def main():
             last_sync_time = current_time
             
         # Montrer l'image avec les frames colorées
-        cv2.imshow("Smart Parking - Visuel", frame)
+        cv2.imshow("ParkiHna - Visuel", frame)
         
         # Pour voir ce que l'algorithme "voit" (pixels blancs), décommentez la ligne suivante :
-        # cv2.imshow("Smart Parking - Analyse", img_proc)
+        # cv2.imshow("ParkiHna - Analyse", img_proc)
 
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break

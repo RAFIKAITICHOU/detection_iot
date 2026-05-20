@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Smart Parking - Détection IoT pour Raspberry Pi (Sans interface graphique)
+ParkiHna - Détection IoT pour Raspberry Pi (Sans interface graphique)
 Version headless - Pas d'affichage, seulement traitement et envoi API
 """
 
@@ -16,7 +16,7 @@ from datetime import datetime
 
 # ==================== CONFIGURATION ====================
 # Configuration API - À MODIFIER
-API_URL = "http://localhost:8080/api/iot/detection"  # ← Changez l'IP
+API_URL = "http://localhost:8081/api/iot/detection"  # ← Changez l'IP
 PARKING_ID = 1
 IP_RASPBERRY = "172.20.10.4"  # ← IP de votre Pi
 ID_CAMERA = "CAM-01"
@@ -145,7 +145,7 @@ class DetectionAPI:
 # ==================== FONCTION PRINCIPALE ====================
 def main():
     print("=" * 60)
-    print("🚗 SMART PARKING IoT DETECTION (Headless Mode)")
+    print("🚗 ParkiHna IoT DETECTION (Headless Mode)")
     print("=" * 60)
     
     # 1. Charger les positions

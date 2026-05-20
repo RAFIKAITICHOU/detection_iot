@@ -8,7 +8,7 @@ import requests
 from datetime import datetime
 
 # ==================== CONFIGURATION BACKEND ====================
-BACKEND_URL = "http://localhost:8080/api/iot/detection"
+BACKEND_URL = "http://localhost:8081/api/iot/detection"
 PARKING_ID = 1
 IP_RASPBERRY = "127.0.0.1"   # Sur PC local, sinon mettre l'IP du Raspberry
 ID_CAMERA = "CAM-01"
@@ -81,7 +81,7 @@ def checkParkingSpace(img, imgPro):
     return img, etats
 
 # ==================== INTERFACE STREAMLIT ====================
-st.set_page_config(page_title="Smart Parking", layout="wide")
+st.set_page_config(page_title="ParkiHna", layout="wide")
 st.title("🚗 Smart Car Parking System")
 
 # Sidebar - Settings

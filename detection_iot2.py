@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Smart Parking - Détection IoT (Version finale - filtrage des places valides)
+ParkiHna - Détection IoT (Version finale - filtrage des places valides)
 """
 
 import cv2
@@ -12,7 +12,7 @@ import time
 from datetime import datetime
 
 # ==================== CONFIGURATION ====================
-API_URL = "http://localhost:8080/api/iot/detection"
+API_URL = "http://localhost:8081/api/iot/detection"
 PARKING_ID = 1
 IP_RASPBERRY = "172.20.10.4"
 ID_CAMERA = "CAM-01"
@@ -226,7 +226,7 @@ class DetectionAPI:
 # ==================== FONCTION PRINCIPALE ====================
 def main():
     print("=" * 60)
-    print("🚗 SMART PARKING IoT DETECTION (Version finale)")
+    print("🚗 ParkiHna IoT DETECTION (Version finale)")
     print("=" * 60)
     
     # 1. Découvrir les places valides

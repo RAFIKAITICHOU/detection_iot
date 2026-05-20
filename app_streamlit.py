@@ -12,7 +12,7 @@ import requests
 from datetime import datetime
 
 # ==================== CONFIGURATION ====================
-API_URL = st.sidebar.text_input("API URL", "http://172.20.10.3:8080/api/iot/detection")
+API_URL = st.sidebar.text_input("API URL", "http://172.20.10.3:8081/api/iot/detection")
 PARKING_ID = st.sidebar.number_input("Parking ID", min_value=1, value=1)
 SEND_TO_API = st.sidebar.checkbox("Envoyer à l'API", value=True)
 
@@ -61,7 +61,7 @@ def checkParkingSpace(img, imgPro):
     return img, detections, spaceCounter
 
 # Interface Streamlit
-st.set_page_config(page_title="Smart Parking", layout="wide")
+st.set_page_config(page_title="ParkiHna", layout="wide")
 st.title("🚗 Smart Car Parking System")
 
 # Sidebar

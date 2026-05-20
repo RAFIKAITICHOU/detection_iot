@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Smart Parking - Detection IoT synchronisee avec reservations
+ParkiHna - Detection IoT synchronisee avec reservations
 Version amelioree qui communique avec l'API de synchronisation
 """
 
@@ -17,8 +17,8 @@ from datetime import datetime
 # ==================== CONFIGURATION ====================
 # Configuration API
 # IMPORTANT: Remplacez 'localhost' par l'adresse IP de votre PC si le script tourne sur le Raspberry Pi
-API_URL = "http://localhost:8080/api/iot/detection"
-SYNC_API_URL = "http://localhost:8080/api/synchronisation/iot/synchroniser"
+API_URL = "http://localhost:8081/api/iot/detection"
+SYNC_API_URL = "http://localhost:8081/api/synchronisation/iot/synchroniser"
 PARKING_ID = 1
 IP_RASPBERRY = "172.20.10.4"  # IP du Pi
 ID_CAMERA = "CAM-01"
@@ -180,7 +180,7 @@ class DetectionSynchroniseeAPI:
 # ==================== FONCTION PRINCIPALE ====================
 def main():
     print("=" * 60)
-    print("SMART PARKING - DETECTION SYNCHRONISEE")
+    print("ParkiHna - DETECTION SYNCHRONISEE")
     print("=" * 60)
     
     # 1. Charger les positions

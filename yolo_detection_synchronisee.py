@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Smart Parking - Détection avec YOLOv8 et Synchronisation
+ParkiHna - Détection avec YOLOv8 et Synchronisation
 Utilise les places définies dans CarParkPos et YOLOv8 pour détecter les véhicules.
 """
 
@@ -10,23 +10,30 @@ import numpy as np
 import requests
 import time
 import os
+import json
+import paho.mqtt.client as mqtt
 from ultralytics import YOLO
 
 # ==================== CONFIGURATION ====================
-API_URL_LOGIN = "http://127.0.0.1:8080/api/auth/login"
-API_URL_BATCH_PLACE = "http://127.0.0.1:8080/api/places/batch"
-API_URL_GET_PLACES = "http://127.0.0.1:8080/api/places/parking/1"
-SYNC_API_URL = "http://127.0.0.1:8080/api/synchronisation/iot/synchroniser"
+API_URL_LOGIN = "http://127.0.0.1:8081/api/auth/login"
+API_URL_BATCH_PLACE = "http://127.0.0.1:8081/api/places/batch"
+API_URL_GET_PLACES = "http://127.0.0.1:8081/api/places/parking/1"
+SYNC_API_URL = "http://127.0.0.1:8081/api/synchronisation/iot/synchroniser"
 PARKING_ID = 1
 BLOC = "0"  # "0" car le parking Guichet a 1 seul étage (Niveau 0)
 IP_RASPBERRY = "172.20.10.4"
 ID_CAMERA = "CAM-01"
 
+# Configuration MQTT
+MQTT_BROKER = "127.0.0.1"
+MQTT_PORT = 1883
+MQTT_TOPIC = "parking/detections"
+
 EMAIL_ADMIN = "superadmin@smartparking.com"
 PASSWORD_ADMIN = "admin123"
 
 VIDEO_SOURCE = 'carPark.mp4'
-INTERVALLE_DETECTION = 3  # Secondes entre chaque analyse
+INTERVALLE_DETECTION = 0.5  # Analyse toutes les 0.5 secondes pour du temps réel
 POSITIONS_FILE = 'CarParkPos' # Le fichier généré par parkingspacepicker.py
 
 PLACE_WIDTH = 108   # Dimensions de parkingspacepicker.py
@@ -35,21 +42,6 @@ PLACE_HEIGHT = 48
 # Initialisation du modèle YOLOv8
 print("Chargement du modèle YOLOv8...")
 model = YOLO('yolov8n.pt')
-
-TOKEN = ""
-
-def obtenir_token():
-    global TOKEN
-    if TOKEN:
-        return TOKEN
-    try:
-        res = requests.post(API_URL_LOGIN, json={"email": EMAIL_ADMIN, "motDePasse": PASSWORD_ADMIN}, timeout=5)
-        if res.status_code == 200:
-            TOKEN = res.json().get('token', '')
-            return TOKEN
-    except Exception as e:
-        pass
-    return ""
 
 # ==================== FONCTIONS UTILITAIRES ====================
 
@@ -81,14 +73,14 @@ def obtenir_parking_id(token=None):
     global PARKING_ID, API_URL_GET_PLACES
     try:
         headers = {"Authorization": f"Bearer {token}"} if token else {}
-        res = requests.get("http://127.0.0.1:8080/api/parkings", headers=headers, timeout=5)
+        res = requests.get("http://127.0.0.1:8081/api/parkings", headers=headers, timeout=5)
         if res.status_code == 200:
             parkings = res.json()
             if parkings:
                 first_parking = parkings[0]
                 PARKING_ID = first_parking.get('id', PARKING_ID)
                 # Mettre à jour les URLs dépendantes
-                API_URL_GET_PLACES = f"http://127.0.0.1:8080/api/places/parking/{PARKING_ID}"
+                API_URL_GET_PLACES = f"http://127.0.0.1:8081/api/places/parking/{PARKING_ID}"
                 print(f"[OK] Parking détecté dynamiquement : ID={PARKING_ID} — '{first_parking.get('nom')}'")
                 return PARKING_ID
             else:
@@ -107,12 +99,17 @@ def charger_et_creer_places():
         return None
 
     # Authentification pour obtenir le token
-    print("[+] Connexion au Backend pour obtenir les droits d'administration...")
-    token = obtenir_token()
-    if token:
-        print("[OK] Connexion réussie !")
-    else:
-        print("[!] Échec de la connexion (Vérifiez les identifiants).")
+    token = ""
+    try:
+        print("[+] Connexion au Backend pour obtenir les droits d'administration...")
+        res_login = requests.post(API_URL_LOGIN, json={"email": EMAIL_ADMIN, "motDePasse": PASSWORD_ADMIN})
+        if res_login.status_code == 200:
+            token = res_login.json().get('token', '')
+            print("[OK] Connexion réussie !")
+        else:
+            print("[!] Échec de la connexion (Vérifiez les identifiants).")
+    except Exception as e:
+        print("[!] Serveur inaccessible pour le login.")
         
     obtenir_parking_id(token)
         
@@ -210,25 +207,52 @@ def charger_et_creer_places():
 
 # ==================== SYNCHRONISATION ====================
 
-def fetch_backend_states():
+def fetch_backend_states(token):
     """Récupère l'état réel des places depuis le backend (LIBRE, OCCUPEE, RESERVEE)"""
-    token = obtenir_token()
     try:
         headers = {"Authorization": f"Bearer {token}"} if token else {}
         response = requests.get(API_URL_GET_PLACES, headers=headers, timeout=5)
         if response.status_code == 200:
             places_data = response.json()
             return {p['id']: p['statut'] for p in places_data}
-        elif response.status_code in [401, 403]:
-            # Token expiré ou invalide, on force la reconnexion au prochain appel
-            global TOKEN
-            TOKEN = ""
     except Exception as e:
         pass
     return None
 
+# Variables globales pour le client MQTT
+mqtt_client = None
+mqtt_connected = False
+
+def init_mqtt():
+    """Initialise la connexion avec le Broker MQTT"""
+    global mqtt_client, mqtt_connected
+    try:
+        mqtt_client = mqtt.Client()
+        
+        def on_connect(client, userdata, flags, rc):
+            global mqtt_connected
+            if rc == 0:
+                mqtt_connected = True
+                print("[OK] Connecté au Broker MQTT avec succès !")
+            else:
+                mqtt_connected = False
+                print(f"[!] Échec de connexion MQTT (Code {rc})")
+
+        def on_disconnect(client, userdata, rc):
+            global mqtt_connected
+            mqtt_connected = False
+            print("[!] Déconnecté du Broker MQTT")
+
+        mqtt_client.on_connect = on_connect
+        mqtt_client.on_disconnect = on_disconnect
+        mqtt_client.connect(MQTT_BROKER, MQTT_PORT, 60)
+        mqtt_client.loop_start()
+    except Exception as e:
+        mqtt_connected = False
+        print(f"[!] Impossible de démarrer le client MQTT : {e}")
+
 def envoyer_synchronisation(changements):
-    """Envoie les changements d'état à l'API de synchronisation"""
+    """Envoie les changements d'état via MQTT (Plan A) ou REST (Plan B en cas de panne)"""
     if not changements:
         return
         
@@ -239,29 +263,58 @@ def envoyer_synchronisation(changements):
         "detections": changements
     }
     
+    # Plan A : Envoi par MQTT
+    if mqtt_connected and mqtt_client is not None:
+        try:
+            payload_str = json.dumps(payload)
+            info = mqtt_client.publish(MQTT_TOPIC, payload_str, qos=1)
+            info.wait_for_publish(timeout=2.0)
+            if info.is_published():
+                return
+            else:
+                print("[!] Échec d'envoi MQTT (Timeout). Utilisation du Plan B (REST)...")
+        except Exception as e:
+            print(f"[!] Erreur lors de l'envoi MQTT : {e}. Utilisation du Plan B (REST)...")
+            
+    # Plan B : Envoi par REST (HTTP)
     try:
         response = requests.post(SYNC_API_URL, json=payload, timeout=10)
-        if response.status_code == 200:
-            pass # Silent success for log clarity
-        else:
-            print(f"[!] Erreur synchronisation: {response.status_code} - {response.text}")
+        if response.status_code != 200:
+            print(f"[!] Erreur synchronisation REST: {response.status_code} - {response.text}")
     except Exception as e:
-        print(f"[!] Erreur de connexion API synchronisation: {e}")
+        print(f"[!] Erreur de connexion API REST: {e}")
 
 # ==================== BOUCLE PRINCIPALE ====================
 
 def main():
+    # Initialisation de MQTT
+    init_mqtt()
+    
     places = charger_et_creer_places()
     if not places:
         return
 
-    # S'authentifier pour obtenir le token
-    obtenir_token()
+    # S'authentifier une fois pour le fetch des statuts
+    token = ""
+    try:
+        res = requests.post(API_URL_LOGIN, json={"email": EMAIL_ADMIN, "motDePasse": PASSWORD_ADMIN})
+        if res.status_code == 200:
+            token = res.json().get('token', '')
+    except:
+        pass
 
     cap = cv2.VideoCapture(VIDEO_SOURCE)
     if not cap.isOpened():
         print(f"Erreur: Impossible d'ouvrir la vidéo {VIDEO_SOURCE}")
         return
+
+    # Récupérer le FPS réel de la vidéo et appliquer un multiplicateur pour compenser la lenteur de l'IA
+    video_fps = cap.get(cv2.CAP_PROP_FPS)
+    if not video_fps or video_fps <= 0:
+        video_fps = 30.0
+    # Multiplier par 1.5 pour accélérer la lecture hors-analyse et rendre le mouvement normal
+    video_fps = video_fps * 1.5
+    frame_delay = 1.0 / video_fps
 
     derniers_etats_iot = {p['db_id']: 0 for p in places} 
     etats_backend = {p['db_id']: "LIBRE" for p in places} # Stocke l'état réel (LIBRE, OCCUPEE, RESERVEE)
@@ -275,6 +328,8 @@ def main():
     headless = False
     
     while True:
+        frame_start = time.perf_counter()
+        
         success, frame = cap.read()
         if not success:
             cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
@@ -341,16 +396,6 @@ def main():
                 if nouvel_etat == 0:
                     places_libres += 1
                 
-                # Mise à jour locale en temps réel pour l'affichage visuel immédiat (vert/rouge)
-                if est_occupee:
-                    etats_backend[place_id_db] = "OCCUPEE"
-                else:
-                    # Si c'était RESERVEE dans le backend (et qu'elle est toujours vide physiquement), on préserve RESERVEE
-                    if etats_backend.get(place_id_db) == "RESERVEE":
-                        pass
-                    else:
-                        etats_backend[place_id_db] = "LIBRE"
-                
                 # Enregistrer le changement pour l'envoi IoT
                 if derniers_etats_iot.get(place_id_db) != nouvel_etat:
                     changements.append({
@@ -373,15 +418,10 @@ def main():
 
         # Récupérer l'état réel du backend (pour voir les places RESERVEE) toutes les 3 secondes
         if current_time - last_fetch_time >= 3.0:
-            backend_states = fetch_backend_states()
+            backend_states = fetch_backend_states(token)
             if backend_states:
                 for db_id, statut in backend_states.items():
-                    # Si c'est physiquement occupé localement, on affiche toujours OCCUPEE (Rouge)
-                    if derniers_etats_iot.get(db_id) == 1:
-                        etats_backend[db_id] = "OCCUPEE"
-                    else:
-                        # Sinon on suit l'état du backend (ex: RESERVEE en jaune, ou LIBRE en vert)
-                        etats_backend[db_id] = statut
+                    etats_backend[db_id] = statut
             last_fetch_time = current_time
 
         # Affichage visuel (Mise à jour à chaque frame)
@@ -389,25 +429,30 @@ def main():
         for car_box in voitures_boxes:
             cv2.rectangle(img_display, (car_box[0], car_box[1]), (car_box[2], car_box[3]), (255, 0, 0), 1)
 
-        # 2. Dessiner les places de parking avec la couleur du Backend !
+        # 2. Dessiner les places de parking avec la couleur du Backend + détections locales en temps réel !
         for place in places:
-            statut = etats_backend.get(place['db_id'], "LIBRE")
+            place_id = place['db_id']
+            statut_local = "OCCUPEE" if derniers_etats_iot.get(place_id, 0) == 1 else "LIBRE"
+            statut_backend = etats_backend.get(place_id, "LIBRE")
             
-            # (B, G, R) dans OpenCV
-            if statut == "OCCUPEE":
+            # Priorité à la détection locale pour le statut OCCUPEE (temps réel instantané)
+            if statut_local == "OCCUPEE":
+                statut_final = "OCCUPEE"
                 color = (0, 0, 255)     # ROUGE
-            elif statut == "RESERVEE":
+            elif statut_backend == "RESERVEE":
+                statut_final = "RESERVEE"
                 color = (0, 255, 255)   # JAUNE
             else:
+                statut_final = "LIBRE"
                 color = (0, 255, 0)     # VERT
             
             cv2.rectangle(img_display, (place['x1'], place['y1']), (place['x2'], place['y2']), color, 2)
-            cv2.putText(img_display, str(place['numero']), (place['x1'], place['y1']-5), 
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+            cv2.putText(img_display, f"{place['numero']} ({statut_final})", (place['x1'], place['y1']-5), 
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.4, color, 1)
             
         if not headless:
             try:
-                cv2.imshow("Smart Parking - YOLOv8", img_display)
+                cv2.imshow("ParkiHna - YOLOv8", img_display)
                 if cv2.waitKey(1) & 0xFF == ord('q'):
                     break
             except Exception as e:
@@ -417,14 +462,28 @@ def main():
                     cv2.destroyAllWindows()
                 except:
                     pass
-        else:
-            # Simuler un léger délai pour ne pas surcharger le CPU
-            time.sleep(0.03)
+        
+        # Réguler la vitesse de la vidéo pour qu'elle corresponde au temps réel (FPS d'origine)
+        elapsed = time.perf_counter() - frame_start
+        sleep_time = frame_delay - elapsed
+        if sleep_time > 0:
+            time.sleep(sleep_time)
+        elif headless:
+            # Léger délai de sécurité en mode headless
+            time.sleep(0.01)
 
     cap.release()
     if not headless:
         try:
             cv2.destroyAllWindows()
+        except:
+            pass
+            
+    # Nettoyage et déconnexion MQTT
+    if mqtt_client is not None:
+        try:
+            mqtt_client.loop_stop()
+            mqtt_client.disconnect()
         except:
             pass
 
